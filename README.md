@@ -10,6 +10,6 @@ pkg install python
 pkg install git
 git clone https://github.com/N1oGey/LocalChat.git
 cd LocalChat
-python LocalChat.py
+python Echat.py
 ```
 ----
