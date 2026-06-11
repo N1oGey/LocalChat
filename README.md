@@ -1,4 +1,4 @@
-# How install LocalChat? 
+# How install Echat? 
 
 Install [Termux](https://play.google.com/store/apps/details?id=com.termux) and use this commands
 
