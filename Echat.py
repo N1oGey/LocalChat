@@ -7,7 +7,20 @@ import subprocess
 import time
 
 NAME_FILE = "/storage/emulated/0/name.txt"
-DEFAULT_NICK = "Anonim"
+DEFAULT_NICK = "echat_user"
+
+BANNER = r"""
+▓█████  ▄████▄   ██░ ██  ▄▄▄     ▄▄▄█████▓
+▓█   ▀ ▒██▀ ▀█  ▓██░ ██▒▒████▄   ▓  ██▒ ▓▒
+▒███   ▒▓█    ▄ ▒██▀▀██░▒██  ▀█▄ ▒ ▓██░ ▒░
+▒▓█  ▄ ▒▓▓▄ ▄██▒░▓█ ░██ ░██▄▄▄▄██░ ▓██▓ ░ 
+░▒████▒▒ ▓███▀ ░░▓█▒░██▓ ▓█   ▓██▒ ▒██▒ ░ 
+░░ ▒░ ░░ ░▒ ▒  ░ ▒ ░░▒░▒ ▒▒   ▓▒█░ ▒ ░░   
+ ░ ░  ░  ░  ▒    ▒ ░▒░ ░  ▒   ▒▒ ░   ░    
+   ░   ░         ░  ░░ ░  ░   ▒    ░      
+   ░  ░░ ░       ░  ░  ░      ░  ░        
+       ░                                  
+"""
 
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
@@ -19,14 +32,13 @@ BOLD = "\033[1m"
 print_lock = threading.Lock()
 
 
+def clear_screen():
+    os.system("clear")
+
+
 def tprint(*args, **kwargs):
     with print_lock:
         print(*args, **kwargs)
-
-
-def clear_line():
-    with print_lock:
-        print("\033[K", end="")
 
 
 def load_nick():
@@ -97,9 +109,8 @@ class RoomServer:
         self.running = False
         self.accept_thread = None
         self.lock = threading.Lock()
-        self.clients = {}  # conn -> {"nick":..., "role":..., "file":...}
+        self.clients = {}
         self.owner_conn = None
-        self.owner_nick = None
 
     def start(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -126,7 +137,7 @@ class RoomServer:
 
         for c in conns:
             try:
-                send_json(c, {"type": "shutdown", "text": "Овнер вышел из чата."})
+                send_json(c, {"type": "shutdown", "text": "The owner left. The chat is closing."})
             except Exception:
                 pass
 
@@ -140,7 +151,10 @@ class RoomServer:
                     pass
             self.clients.clear()
             self.owner_conn = None
-            self.owner_nick = None
+
+    def current_count(self):
+        with self.lock:
+            return len(self.clients)
 
     def broadcast(self, obj, exclude=None):
         with self.lock:
@@ -151,12 +165,7 @@ class RoomServer:
                 continue
             send_json(c, obj)
 
-    def current_count(self):
-        with self.lock:
-            return len(self.clients)
-
     def remove_client(self, conn, send_leave=True, owner_left=False):
-        info = None
         with self.lock:
             info = self.clients.pop(conn, None)
             if self.owner_conn == conn:
@@ -171,7 +180,7 @@ class RoomServer:
         if owner_left:
             self.broadcast({
                 "type": "shutdown",
-                "text": f"Овнер {nick} вышел. Чат закрывается."
+                "text": f"The owner {nick} left. The chat is closing."
             })
             self.stop()
             return
@@ -179,7 +188,7 @@ class RoomServer:
         if send_leave:
             self.broadcast({
                 "type": "sys",
-                "text": f"{nick} вышел из чата.",
+                "text": f"{nick} left the chat.",
                 "count": count
             })
 
@@ -216,18 +225,17 @@ class RoomServer:
             self.clients[conn] = {"nick": nick, "role": role, "file": f}
             if role == "owner":
                 self.owner_conn = conn
-                self.owner_nick = nick
 
         count = self.current_count()
         self.broadcast({
             "type": "sys",
-            "text": f"{nick} вошёл в чат.",
+            "text": f"{nick} joined the chat.",
             "count": count
         })
 
         send_json(conn, {
             "type": "sys",
-            "text": f"Ты вошёл в чат. Участников: {count}",
+            "text": f"You joined the chat. Users online: {count}",
             "count": count
         })
 
@@ -238,25 +246,30 @@ class RoomServer:
                     break
 
                 mtype = msg.get("type")
+
                 if mtype == "msg":
                     text = str(msg.get("text", "")).rstrip()
                     if not text:
                         continue
+
                     with self.lock:
                         info = self.clients.get(conn)
                     if not info:
                         continue
+
+                    
                     self.broadcast({
                         "type": "msg",
                         "nick": info["nick"],
                         "role": info["role"],
                         "text": text,
                         "count": self.current_count()
-                    })
+                    }, exclude=conn)
 
                 elif mtype == "exit":
                     with self.lock:
                         info = self.clients.get(conn)
+
                     if info and info["role"] == "owner":
                         self.remove_client(conn, send_leave=False, owner_left=True)
                     else:
@@ -331,7 +344,7 @@ class ChatClient:
                     count = data.get("count", self.last_count)
                     self.last_count = count
                     with print_lock:
-                        print(f"{CYAN}[Участников: {count}]{RESET} {self.color_nick(nick, role)}: {text}")
+                        print(f"{CYAN}[Users online: {count}]{RESET} {self.color_nick(nick, role)}: {text}")
 
                 elif t == "sys":
                     text = data.get("text", "")
@@ -339,12 +352,12 @@ class ChatClient:
                     self.last_count = count
                     with print_lock:
                         if count is not None:
-                            print(f"{CYAN}[Участников: {count}]{RESET} {text}")
+                            print(f"{CYAN}[Users online: {count}]{RESET} {text}")
                         else:
-                            print(f"{CYAN}[Система]{RESET} {text}")
+                            print(f"{CYAN}[System]{RESET} {text}")
 
                 elif t == "shutdown":
-                    text = data.get("text", "Чат закрыт.")
+                    text = data.get("text", "Chat closed.")
                     with print_lock:
                         print(f"{RED}{text}{RESET}")
                     self.running = False
@@ -375,10 +388,7 @@ class ChatClient:
                     continue
 
                 if msg.lower() in ("/exit", "exit", "quit"):
-                    if self.role == "owner":
-                        send_json(self.sock, {"type": "exit"})
-                    else:
-                        send_json(self.sock, {"type": "exit"})
+                    send_json(self.sock, {"type": "exit"})
                     self.close()
                     break
 
@@ -389,24 +399,37 @@ class ChatClient:
             time.sleep(0.2)
 
 
+def pause(msg="Press Enter to continue..."):
+    try:
+        input(msg)
+    except KeyboardInterrupt:
+        pass
+
+
 def ask_nick():
+    clear_screen()
+    print(BANNER)
     current = load_nick()
-    print(f"Текущий ник: {BOLD}{current}{RESET}")
-    nick = input("Введи новый ник (до 20 символов, Enter = Anonim): ").strip()[:20]
+    print(f"Current nick: {BOLD}{current}{RESET}")
+    nick = input("Enter a new nick (max 20 chars, Enter = nothing): ").strip()[:20]
     if not nick:
         nick = DEFAULT_NICK
 
     ok, res = save_nick(nick)
     if ok:
-        tprint(f"{GREEN}Ник сохранён:{RESET} {res}")
+        print(f"{GREEN}Nick saved:{RESET} {res}")
     else:
-        tprint(f"{RED}Не удалось сохранить ник:{RESET} {res}")
+        print(f"{RED}Failed to save nick:{RESET} {res}")
+    pause()
 
 
 def create_chat(my_nick):
-    server = RoomServer(host="0.0.0.0", port=0)
+    clear_screen()
+    print(BANNER)
 
+    server = None
     chosen_port = None
+
     for _ in range(100):
         port = random.randint(1000, 9999)
         try:
@@ -416,70 +439,82 @@ def create_chat(my_nick):
         except OSError:
             continue
 
-    if not chosen_port:
-        tprint(f"{RED}Не удалось создать чат: нет свободного порта.{RESET}")
+    if not server or not chosen_port:
+        print(f"{RED}Failed to create a chat. No free port was available.{RESET}")
+        pause()
         return
 
     local_ip = get_local_ip()
-    tprint(f"{GREEN}Чат создан!{RESET}")
-    tprint(f"IP владельца: {BOLD}{local_ip}{RESET}")
-    tprint(f"Порт: {BOLD}{chosen_port}{RESET}")
 
-    if copy_to_clipboard(chosen_port):
-        tprint(f"{CYAN}Порт скопирован в буфер обмена.{RESET}")
-    else:
-        tprint(f"{CYAN}Порт не удалось скопировать автоматически.{RESET}")
+    print(f"{GREEN}Chat created!{RESET}")
+    print(f"Your IP: {BOLD}{local_ip}{RESET}")
+    print(f"Port: {BOLD}{chosen_port}{RESET}")
 
-    tprint("Другим людям нужно ввести IP и порт, чтобы подключиться.")
-    tprint("Для выхода из чата напиши /exit или нажми Ctrl+C.\n")
+    if copy_to_clipboard(str(chosen_port)):
+        print(f"{CYAN}Port copied to clipboard.{RESET}")
+
+    print("Other users need your IP address and port to connect.")
+    print("Type /exit to close the chat.\n")
 
     client = ChatClient("127.0.0.1", chosen_port, my_nick, "owner")
     try:
         client.run()
     except Exception as e:
-        tprint(f"{RED}Ошибка в чате:{RESET} {e}")
+        print(f"{RED}Chat error:{RESET} {e}")
     finally:
         server.stop()
+        clear_screen()
+        pause("Chat closed. Press Enter to return to the menu...")
 
 
 def join_chat(my_nick):
-    host = input("Введите IP владельца чата (Enter = 127.0.0.1): ").strip()
+    clear_screen()
+    print(BANNER)
+
+    host = input("Enter the owner's IP address (Enter = 127.0.0.1): ").strip()
     if not host:
         host = "127.0.0.1"
 
-    port_txt = input("Введите порт: ").strip()
+    port_txt = input("Enter the port: ").strip()
     if not port_txt.isdigit():
-        tprint(f"{RED}Порт должен быть числом.{RESET}")
+        print(f"{RED}Port must be a number.{RESET}")
+        pause()
         return
 
     port = int(port_txt)
     if port < 1 or port > 65535:
-        tprint(f"{RED}Неверный порт.{RESET}")
+        print(f"{RED}Invalid port.{RESET}")
+        pause()
         return
 
     client = ChatClient(host, port, my_nick, "guest")
     try:
         client.run()
     except ConnectionRefusedError:
-        tprint(f"{RED}Не удалось подключиться к чату.{RESET}")
+        print(f"{RED}Could not connect to the chat.{RESET}")
+        pause()
     except Exception as e:
-        tprint(f"{RED}Ошибка подключения:{RESET} {e}")
+        print(f"{RED}Connection error:{RESET} {e}")
+        pause()
 
 
 def main():
+    clear_screen()
     my_nick = load_nick()
 
     while True:
-        print("\n" + "=" * 34)
-        print(f"{BOLD}Простой консольный мессенджер{RESET}")
-        print(f"Твой ник: {BOLD}{my_nick}{RESET}")
-        print("=" * 34)
-        print("1. Поставить ник")
-        print("2. Присоединиться к чату")
-        print("3. Создать чат")
-        print("4. Выход")
+        clear_screen()
+        print(BANNER)
+        print(f"{BOLD}𝐄𝐜𝐡𝐚𝐭 v1 by @KrystalArial{RESET}")
+        print("=" * 36)
+        print(f"Your nick: {BOLD}{my_nick}{RESET}\n")
+        print("1. Set nick")
+        print("2. Join chat")
+        print("3. Create chat")
+        print("4. Exit\n")
+        print("=" * 36)
 
-        choice = input("Выбор: ").strip()
+        choice = input("Choose 1-4: ").strip()
 
         if choice == "1":
             ask_nick()
@@ -494,15 +529,18 @@ def main():
             my_nick = load_nick()
 
         elif choice == "4":
-            print("Выход.")
+            clear_screen()
+            print("Goodbye.")
             break
 
         else:
-            print("Неверный выбор.")
+            print("Invalid choice. Please enter 1, 2, 3, or 4.")
+            time.sleep(1)
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\nВыход.")
+        clear_screen()
+        print("Goodbye.")
